@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>O N I — Dupe Duelist</title>
+<style>
+  :root{
+    --bg:#0f1724; --card:#0b1220; --muted:#9aa7b2; --accent:#6ee7b7;
+    --glass: rgba(255,255,255,0.04);
+    --card-radius:16px;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    color:#e6eef6;
+  }
+  html,body{height:100%;margin:0;background:
+    radial-gradient(1200px 600px at 10% 10%, rgba(110,231,183,0.06), transparent 12%),
+    linear-gradient(180deg,#071021 0%, #081226 100%);}
+
+  .app {
+    max-width:1100px;margin:36px auto;padding:28px;border-radius:18px;
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    box-shadow: 0 6px 30px rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.03);
+  }
+
+  header{display:flex;align-items:center;gap:16px;margin-bottom:18px}
+  h1{font-size:20px;margin:0}
+  .desc{color:var(--muted);font-size:13px;margin-top:4px}
+
+  .status-row{display:flex;gap:12px;align-items:center;margin-bottom:18px}
+  .pill{background:var(--glass);padding:8px 12px;border-radius:999px;font-size:13px;color:var(--muted);display:inline-block}
+
+  .arena {
+    display:flex;gap:18px;align-items:stretch;
+  }
+
+  .card {
+    flex:1;background:linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0.01));
+    padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,0.03);
+    display:flex;flex-direction:column;align-items:center;gap:10px;
+  }
+
+  .dupe-img {
+    width:100%; max-width:360px; height:360px; display:block; object-fit:contain;
+    background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));
+    border-radius:8px; padding:12px;
+  }
+
+  .dupe-name{font-weight:600;letter-spacing:0.6px}
+  .choose-btn{margin-top:auto;width:100%;padding:12px;border-radius:10px;border:0;font-weight:700;
+    cursor:pointer;background:linear-gradient(90deg, rgba(110,231,183,0.12), rgba(110,231,183,0.06));
+    color:var(--accent);font-size:15px}
+  .choose-btn:hover{filter:brightness(1.05)}
+  .choose-secondary{background:transparent;border:1px solid rgba(255,255,255,0.04); color:var(--muted); font-weight:600}
+
+  .controls{display:flex;gap:10px;align-items:center;margin-top:14px}
+  button.small{background:transparent;border:1px solid rgba(255,255,255,0.05);color:var(--muted);padding:8px 12px;border-radius:8px;cursor:pointer}
+  .progress{width:100%;height:10px;background:rgba(255,255,255,0.03);border-radius:999px;overflow:hidden}
+  .progress > i{display:block;height:100%;background:linear-gradient(90deg,#3ee6b0,#70d1ff);width:0%}
+
+  .log{margin-top:18px;color:var(--muted);font-size:13px;line-height:1.4}
+  .final-ranking{margin-top:18px}
+
+  .rank-list{display:grid;grid-template-columns:1fr 56px;gap:8px;margin-top:12px}
+  .rank-item{background:rgba(255,255,255,0.02);padding:8px;border-radius:8px;display:flex;align-items:center;gap:8px}
+  .rank-item img{height:36px;width:36px;object-fit:contain;border-radius:6px;background:rgba(255,255,255,0.03);padding:4px}
+  footer{margin-top:16px;color:var(--muted);font-size:12px;text-align:center}
+  @media(max-width:860px){
+    .arena{flex-direction:column}
+    .dupe-img{height:260px}
+  }
+</style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="ONI Dupe Duelist">
+    <header>
+      <div>
+        <h1>ONI — Dupe Duelist</h1>
+        <div class="desc">Choose which dupe you prefer in each face-off. Winners advance to the next round; losers from each round are ranked by you before moving on. At the end you get a full ranking.</div>
+      </div>
+    </header>
+
+    <div class="status-row">
+      <div class="pill" id="roundBadge">Round: 1</div>
+      <div class="pill" id="modeBadge">Mode: Pairing</div>
+      <div class="pill" id="poolSize">Remaining this round: 0</div>
+      <div style="flex:1"></div>
+      <div class="pill" id="progressText">Comparisons done: 0</div>
+    </div>
+
+    <div class="arena" id="arena">
+      <div class="card" id="leftCard" aria-live="polite">
+        <img id="leftImg" class="dupe-img" src="" alt="">
+        <div class="dupe-name" id="leftName"></div>
+        <button class="choose-btn" id="leftBtn">Choose Left</button>
+      </div>
+
+      <div class="card" id="rightCard" aria-live="polite">
+        <img id="rightImg" class="dupe-img" src="" alt="">
+        <div class="dupe-name" id="rightName"></div>
+        <button class="choose-btn choose-secondary" id="rightBtn">Choose Right</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div style="width:240px">
+        <div class="progress" aria-hidden="true"><i id="progressBar"></i></div>
+      </div>
+      <button class="small" id="undoBtn" title="Undo previous choice (one step)">Undo</button>
+      <button class="small" id="restartBtn" title="Start over from the beginning">Restart</button>
+      <div style="flex:1"></div>
+      <div style="color:var(--muted);font-size:13px">Items total: <strong id="totalCount">0</strong></div>
+    </div>
+
+    <div class="log" id="logArea"></div>
+
+    <div class="final-ranking" id="finalArea" hidden>
+      <h3 style="margin:0 0 8px 0">Final ranking</h3>
+      <div class="rank-list" id="rankingList"></div>
+    </div>
+
+    <footer>Built for choosing dupes — deliberate choices beat random taste. Enjoy the tournament.</footer>
+  </div>
+
+<script>
+/*
+ ONI Dupe Duelist
+ Single-file interactive tournament.
+ - Uses single-elimination rounds.
+ - Losers of each round are put through a quick interactive ranking (insertion-style) so they have a definitive order.
+ - Final output: full ranking from top to bottom.
+*/
+
+const ALL = [
+"abe","ada","amari","ari","ashkan","bahni","bubbles","burt","camilla","camille",
+"catilina","chip","devon","edwirdo","ellie","frankie","freya","gizmo","gossman",
+"harold","higsby","jean","joshua","leira","liam","marie","max","may","maya",
+"meep","mi-ma","nails","nikola","nisbet","otto","pei","quinn","ren","rowan",
+"ruby","sonyar","steela","steeve","stinky","travaldo","turner",
+// ADDED JORGE HERE
+"jorge"
+];
+
+// ---- state ----
+let initialPool = ALL.map(n => n + ".png");
+let roundNumber = 1;
+let currentPool = [];      // pool for current round (filenames)
+let nextPool = [];         // winners advancing to next round
+let roundLosersUnordered = []; // losers in this round (unordered)
+let orderedLosersAllRounds = []; // ordered losers appended after each round (from worst up)
+let comparisonCount = 0;
+let totalComparisonsEstimate = 0;
+let mode = "pairing"; // 'pairing' or 'sortingLosers' or 'finished'
+let pairQueue = []; // queue of pair comparisons for pairing mode
+let sortingState = null; // state for interactive insertion-ranking of losers (object)
+let history = []; // for undo — stack of actions {type, data}
+let champion = null;
+
+const leftImg = document.getElementById('leftImg');
+const rightImg = document.getElementById('rightImg');
+const leftName = document.getElementById('leftName');
+const rightName = document.getElementById('rightName');
+const leftBtn = document.getElementById('leftBtn');
+const rightBtn = document.getElementById('rightBtn');
+const roundBadge = document.getElementById('roundBadge');
+const modeBadge = document.getElementById('modeBadge');
+const poolSize = document.getElementById('poolSize');
+const logArea = document.getElementById('logArea');
+const progressBar = document.getElementById('progressBar');
+const progressText = document.getElementById('progressText');
+const totalCount = document.getElementById('totalCount');
+const restartBtn = document.getElementById('restartBtn');
+const undoBtn = document.getElementById('undoBtn');
+const finalArea = document.getElementById('finalArea');
+const rankingList = document.getElementById('rankingList');
+
+// helpers
+function basenameToLabel(fn){
+  return fn.replace('.png','').replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+function imgPath(fn){ return 'images/' + fn; }
+
+function shuffle(a){
+  for(let i=a.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+
+// build pair queue for single-elimination pairing
+function buildPairQueueFor(pool){
+  const q = [];
+  const arr = pool.slice();
+  shuffle(arr);
+  while(arr.length >= 2){
+    const a = arr.shift();
+    const b = arr.shift();
+    q.push([a,b]);
+  }
+  // if odd, last one gets bye (treated as auto-advance)
+  if(arr.length === 1){
+    q.push([arr.shift(), null]); // null signals bye
+  }
+  return q;
+}
+
+// insertion ranking generator: given a list of losers, generate interactive comparisons
+// We'll implement interactive insertion: take nextItem, compare with ranked list from top to bottom.
+function startSortingLosers(list){
+  if(list.length === 0){
+    // nothing to sort
+    sortingState = null;
+    finishSortingLosers();
+    return;
+  }
+  sortingState = {
+    items: list.slice(),  // remaining items to insert
+    ranked: [],
+    currentItem: null,
+    compareIndex: 0
+  };
+  mode = 'sortingLosers';
+  modeBadge.textContent = 'Mode: Sorting losers';
+  log("Sorting " + list.length + " loser(s) for Round " + roundNumber + ".");
+  prepareNextSortingComparison();
+}
+
+function prepareNextSortingComparison(){
+  if(!sortingState) return;
+  if(sortingState.currentItem == null){
+    // take next item
+    sortingState.currentItem = sortingState.items.shift();
+    sortingState.compareIndex = 0;
+    // if ranked empty, insert immediately
+    if(sortingState.ranked.length === 0){
+      sortingState.ranked.push(sortingState.currentItem);
+      history.push({type:'insert-loser', data:{item:sortingState.currentItem, pos:0}}); // for undo
+      sortingState.currentItem = null;
+      // continue to next
+      prepareNextSortingComparison();
+      return;
+    }
+  }
+
+  // if compareIndex >= ranked.length then append at end
+  if(sortingState.compareIndex >= sortingState.ranked.length){
+    sortingState.ranked.push(sortingState.currentItem);
+    history.push({type:'insert-loser', data:{item:sortingState.currentItem, pos:sortingState.ranked.length-1}});
+    sortingState.currentItem = null;
+    prepareNextSortingComparison();
+    return;
+  }
+
+  // otherwise, compare currentItem vs ranked[compareIndex]
+  const a = sortingState.currentItem;
+  const b = sortingState.ranked[sortingState.compareIndex];
+  // queue this comparison for showing
+  pairQueue = [[a,b]];
+  updatePoolUI();
+}
+
+// after sorting completed:
+function finishSortingLosers(){
+  // append sorted losers for this round to global ordered losers
+  if(sortingState && sortingState.ranked){
+    // ranked is best -> worst for that loser group; we want append them AFTER the winners ranking,
+    // but for eventual final ranking we will place winners above losers of later rounds. We'll store them in order
+    // so append ranked reversed so worst at end? We'll append as-is to orderedLosersAllRounds.
+    orderedLosersAllRounds.push(...sortingState.ranked.slice()); // best of losers first
+  }
+  sortingState = null;
+  // prepare next round
+  roundNumber++;
+  currentPool = nextPool.slice();
+  nextPool = [];
+  comparisonCount = 0;
+  // if only one left, finished
+  if(currentPool.length <= 1){
+    if(currentPool.length === 1){
+      champion = currentPool[0];
+    }
+    mode = 'finished';
+    showFinal();
+    return;
+  }
+  // else start next pairing round
+  mode = 'pairing';
+  pairQueue = buildPairQueueFor(currentPool);
+  totalComparisonsEstimate = pairQueue.length;
+  roundBadge.textContent = 'Round: ' + roundNumber;
+  modeBadge.textContent = 'Mode: Pairing';
+  poolSize.textContent = 'Remaining this round: ' + pairQueue.length;
+  log("Starting Round " + roundNumber + " with " + currentPool.length + " dupes.");
+  updatePoolUI();
+}
+
+// UI rendering for current pairQueue or sorting comparison
+function updatePoolUI(){
+  // set totals
+  totalCount.textContent = initialPool.length;
+
+  if(mode === 'pairing'){
+    modeBadge.textContent = 'Mode: Pairing';
+    roundBadge.textContent = 'Round: ' + roundNumber;
+    poolSize.textContent = 'Remaining this round: ' + pairQueue.length;
+    progressText.textContent = `Comparisons done: ${comparisonCount}`;
+    const pct = totalComparisonsEstimate ? Math.round((comparisonCount/totalComparisonsEstimate)*100) : 0;
+    progressBar.style.width = pct + '%';
+    if(pairQueue.length === 0){
+      // nothing queued (should happen if we just finished pairings)
+      // begin sorting this round's losers
+      mode = 'sortingLosers';
+      modeBadge.textContent = 'Mode: Sorting losers';
+      startSortingLosers(roundLosersUnordered);
+      roundLosersUnordered = [];
+      return;
+    }
+    const [a,b] = pairQueue[0];
+    if(!b){
+      // bye - auto advance
+      showBye(a);
+      return;
+    }
+    showPair(a,b);
+  } else if(mode === 'sortingLosers'){
+    modeBadge.textContent = 'Mode: Sorting losers';
+    if(pairQueue.length === 0){
+      // sorting comparisons are queued via prepareNextSortingComparison
+      // if none left and sortingState exists, prepare next
+      if(sortingState && (sortingState.items.length > 0 || sortingState.currentItem != null)){
+        prepareNextSortingComparison();
+        return;
+      } else {
+        // done
+        finishSortingLosers();
+        return;
+      }
+    } else {
+      const [a,b] = pairQueue[0];
+      showPair(a,b);
+    }
+  } else if(mode === 'finished'){
+    // disabled selection UI
+    leftName.textContent = rightName.textContent = "Tournament complete";
+    leftImg.src = rightImg.src = "";
+    leftBtn.disabled = rightBtn.disabled = true;
+    poolSize.textContent = 'Remaining: 0';
+  }
+}
+
+// show a pair
+function showPair(a,b){
+  leftImg.src = imgPath(a);
+  rightImg.src = imgPath(b);
+  leftImg.alt = basenameToLabel(a);
+  rightImg.alt = basenameToLabel(b);
+  leftName.textContent = basenameToLabel(a);
+  rightName.textContent = basenameToLabel(b);
+  leftBtn.disabled = false;
+  rightBtn.disabled = false;
+}
+
+// show bye
+function showBye(a){
+  // give a small pause and auto-advance a
+  leftImg.src = imgPath(a);
+  leftImg.alt = basenameToLabel(a);
+  leftName.textContent = basenameToLabel(a) + " (bye — auto-advance)";
+  rightImg.src = "";
+  rightName.textContent = "";
+  leftBtn.disabled = true;
+  rightBtn.disabled = true;
+
+  // process bye automatically after short delay so user sees it
+  setTimeout(() => {
+    nextPool.push(a);
+    history.push({type:'bye', data:{item:a}});
+    pairQueue.shift();
+    comparisonCount++;
+    updatePoolUI();
+  }, 700);
+}
+
+// handle choice
+function choose(side){
+  if(pairQueue.length === 0) return;
+  const [a,b] = pairQueue[0];
+  let winner, loser;
+  if(side === 'left'){ winner = a; loser = b; } else { winner = b; loser = a; }
+
+  // do different handling depending on mode
+  if(mode === 'pairing'){
+    // winner advances nextPool, loser recorded for sorting later
+    nextPool.push(winner);
+    roundLosersUnordered.push(loser);
+    history.push({type:'pair', data:{winner, loser, round:roundNumber}});
+    pairQueue.shift();
+    comparisonCount++;
+    updatePoolUI();
+  } else if(mode === 'sortingLosers'){
+    // In sorting mode, this comparison was between currentItem (a) and ranked element (b).
+    // If user picks currentItem, insert before b. If picks ranked element, move to compare with next ranked element.
+    const currentItem = sortingState.currentItem;
+    const ranked = sortingState.ranked;
+    const idx = sortingState.compareIndex;
+    // we must be sure which of a,b is currentItem; a was set as currentItem in prepareNextSortingComparison
+    let chosenIsCurrent = (side === 'left' && a===currentItem) || (side === 'right' && b===currentItem);
+    if(chosenIsCurrent){
+      // insert currentItem before ranked[idx]
+      ranked.splice(idx, 0, currentItem);
+      history.push({type:'insert-loser', data:{item:currentItem, pos:idx}});
+      // clear currentItem
+      sortingState.currentItem = null;
+      // pop the comparison and continue
+      pairQueue.shift();
+      prepareNextSortingComparison();
+    } else {
+      // user prefers ranked[idx] over currentItem -> move compareIndex forward
+      sortingState.compareIndex++;
+      pairQueue.shift();
+      prepareNextSortingComparison();
+    }
+    comparisonCount++;
+    updatePoolUI();
+  }
+}
+
+// finalize and show final ranking
+function showFinal(){
+  modeBadge.textContent = 'Mode: Finished';
+  roundBadge.textContent = 'Complete';
+  poolSize.textContent = 'Remaining: 0';
+  // Build final ranking:
+  // Champion (if exists) sits at top. Then winners from last rounds are implicitly placed by order of elimination.
+  // We'll assemble a ranking by:
+  // 1) champion (if any)
+  // 2) For each round from last to first, take orderedLosersAllRounds from that round in order (best-to-worst among losers).
+  // Note: We stored orderedLosersAllRounds as simple appended per-round groups; the order in which rounds were appended reflects round chronology.
+  // The winners eliminated in later rounds were appended later, so placing champion first followed by losers of last round down to first gives bracket-style ordering.
+  // We will build as champion + reverse of orderedLosersAllRounds (so best losers first, worst last).
+  const ranking = [];
+  if(champion) ranking.push(champion);
+  // orderedLosersAllRounds currently contains the concatenation per round of ranked losers; the last appended elements are from the final rounds.
+  // To create a natural ranking: place the losers from the last round (best losers) directly after champion, then earlier round losers after.
+  // That means we should reverse the per-round groups order. However we didn't keep group boundaries; to keep things straightforward and predictable, we'll place orderedLosersAllRounds as-is AFTER champion.
+  ranking.push(...orderedLosersAllRounds);
+
+  // If some items were never compared (shouldn't happen), add them
+  const included = new Set(ranking);
+  for(const it of initialPool){
+    if(!included.has(it)) ranking.push(it);
+  }
+
+  // Show ranking
+  rankingList.innerHTML = '';
+  finalArea.hidden = false;
+  for(let i=0;i<ranking.length;i++){
+    const fn = ranking[i];
+    const label = basenameToLabel(fn);
+    const item = document.createElement('div');
+    item.className = 'rank-item';
+    item.innerHTML = `<div style="flex:1"><strong>#${i+1} — ${label}</strong></div><div style="display:flex;align-items:center;gap:8px"><img src="${imgPath(fn)}" alt="${label}"><div style="width:56px;text-align:right;color:var(--muted)">${fn}</div></div>`;
+    rankingList.appendChild(item);
+  }
+
+  log("Tournament complete. Final ranking shown below.");
+  // disable buttons
+  leftBtn.disabled = rightBtn.disabled = true;
+}
+
+// logging
+function log(txt){
+  const t = document.createElement('div');
+  t.textContent = txt;
+  logArea.prepend(t);
+}
+
+// initialize tournament
+function startTournament(){
+  // reset all
+  roundNumber = 1;
+  currentPool = initialPool.slice();
+  nextPool = [];
+  roundLosersUnordered = [];
+  orderedLosersAllRounds = [];
+  comparisonCount = 0;
+  totalComparisonsEstimate = 0;
+  mode = 'pairing';
+  pairQueue = buildPairQueueFor(currentPool);
+  totalComparisonsEstimate = pairQueue.length;
+  history = [];
+  champion = null;
+  finalArea.hidden = true;
+  rankingList.innerHTML = '';
+  leftBtn.disabled = false;
+  rightBtn.disabled = false;
+  roundBadge.textContent = 'Round: ' + roundNumber;
+  modeBadge.textContent = 'Mode: Pairing';
+  poolSize.textContent = 'Remaining this round: ' + pairQueue.length;
+  logArea.innerHTML = '';
+  log("Starting Round 1 with " + currentPool.length + " dupes.");
+  updatePoolUI();
+}
+
+// undo last action (single step)
+function undo(){
+  if(history.length === 0){ log("Nothing to undo."); return; }
+  const last = history.pop();
+  // Basic undo support for these types: pair (winner/loser), insert-loser, bye
+  if(last.type === 'pair'){
+    // revert: remove last winner from nextPool, put winner and loser back to front of pairQueue
+    const {winner, loser, round} = last.data;
+    // remove one occurrence of winner from nextPool (from end)
+    const idx = nextPool.lastIndexOf(winner);
+    if(idx !== -1) nextPool.splice(idx,1);
+    // put pair back to front
+    pairQueue.unshift([winner, loser]);
+    comparisonCount = Math.max(0, comparisonCount-1);
+    log(`Undid pair: ${basenameToLabel(winner)} / ${basenameL(loser)}`);
+    mode = 'pairing';
+    updatePoolUI();
+    return;
+  } else if(last.type === 'insert-loser'){
+    const {item, pos} = last.data;
+    // remove from ordered losers structure if present, or from sorting state ranked
+    if(sortingState && sortingState.ranked){
+      const idx = sortingState.ranked.indexOf(item);
+      if(idx !== -1) sortingState.ranked.splice(idx,1);
+    } else {
+      const idx = orderedLosersAllRounds.indexOf(item);
+      if(idx !== -1) orderedLosersAllRounds.splice(idx,1);
+    }
+    // put the item back into sortingState.items (so it needs re-insertion)
+    if(!sortingState) sortingState = {items:[], ranked:[]};
+    sortingState.items.unshift(item);
+    comparisonCount = Math.max(0, comparisonCount-1);
+    log(`Undid insertion of ${basenameToLabel(item)} into loser ordering.`);
+    mode = 'sortingLosers';
+    updatePoolUI();
+    return;
+  } else if(last.type === 'bye'){
+    const {item} = last.data;
+    // remove from history effect: remove last occurrence in nextPool if present
+    const idx = nextPool.lastIndexOf(item);
+    if(idx !== -1) nextPool.splice(idx,1);
+    // reinsert into the front of pairQueue as a bye pair
+    pairQueue.unshift([item, null]);
+    comparisonCount = Math.max(0, comparisonCount-1);
+    log(`Undid bye for ${basenameToLabel(item)}.`);
+    mode = 'pairing';
+    updatePoolUI();
+    return;
+  } else {
+    log("Cannot undo that action.");
+  }
+}
+
+// wire buttons
+leftBtn.addEventListener('click', ()=>choose('left'));
+rightBtn.addEventListener('click', ()=>choose('right'));
+restartBtn.addEventListener('click', ()=>{
+  if(confirm("Restart the entire tournament? This clears progress.")) startTournament();
+});
+undoBtn.addEventListener('click', ()=>undo());
+
+// keyboard shortcuts (ArrowLeft / ArrowRight)
+document.addEventListener('keydown', (e)=>{
+  if(e.key === 'ArrowLeft') leftBtn.click();
+  if(e.key === 'ArrowRight') rightBtn.click();
+});
+
+// kick things off
+startTournament();
+
+</script>
+</body>
+</html>
