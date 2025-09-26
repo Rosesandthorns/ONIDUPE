@@ -340,7 +340,8 @@ function filenameOnly(fn){
     if (!fn) return '';
     return fn.replace('.png', '');
 }
-function imgPath(fn){ return './' + fn; } // Assuming images are in the same folder. Change if needed.
+// *** THE FIX IS HERE ***
+function imgPath(fn){ return 'images/' + fn; }
 
 function shuffle(a){
     for(let i=a.length-1;i>0;i--){
@@ -390,7 +391,6 @@ function processNextMergeStep() {
             finishCurrentMerge();
             return;
         }
-        // *** FIX: Failsafe for duplicate items ***
         if (leftList[0] === rightList[0]) {
             log(`CRITICAL: Duplicate item detected (${basenameToLabel(leftList[0])}). Auto-resolving.`);
             mergedResult.push(leftList.shift()); // just pick one and move on
@@ -420,7 +420,6 @@ function finishCurrentMerge() {
     leftList = null;
     rightList = null;
     mergedResult = [];
-    // *** FIX: Disable undo button during state transition to prevent corruption ***
     undoBtn.disabled = true;
     processNextMergeStep();
 }
@@ -479,12 +478,10 @@ function undo() {
     if (lastAction.type === 'compare') {
         const { winner, winnerOriginalList } = lastAction;
 
-        // Check if the winner is actually at the end of the merged list to prevent errors
         if(mergedResult.length > 0 && mergedResult[mergedResult.length - 1] === winner){
             mergedResult.pop();
         }
        
-        // Put winner back into its original list
         if (winnerOriginalList === 'left') {
             leftList.unshift(winner);
         } else {
@@ -507,7 +504,6 @@ function updateUI() {
         rightCard.style.opacity = 0;
         return;
     }
-    // Enable undo if there's history, otherwise disable it.
     undoBtn.disabled = history.length === 0;
 
     const leftItem = leftList[0];
