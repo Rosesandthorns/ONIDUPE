@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>ONI — Dupe Duelist</title>
+<title>ONI — Dupe Ranker</title>
 <style>
 /* --- Global Reset & Variables --- */
 :root {
@@ -84,7 +84,7 @@ h3 {
     min-height: 450px;
     max-width: 380px;
     border: 3px solid transparent;
-    transition: border 0.3s ease;
+    transition: all 0.3s ease;
 }
 .card.highlight-winner {
     border-color: var(--color-accent-green);
@@ -244,15 +244,13 @@ h3 {
 <body>
 <div class="app">
     <header>
-      <h1>ONI — Dupe Duelist</h1>
-      <div style="color:var(--color-text-secondary); font-size:14px; margin-bottom:25px;">Choose the **Duplicant** you prefer in each face-off. Winners advance; losers are ranked.</div>
+      <h1>ONI — Dupe Ranker</h1>
+      <div style="color:var(--color-text-secondary); font-size:14px; margin-bottom:25px;">Choose your preferred **Duplicant** in each pair to create a fully sorted list of your favorites.</div>
     </header>
 
   <div class="status-row">
-    <div class="pill">Round: <span id="roundBadge">1</span></div>
-    <div class="pill">Mode: <span id="modeBadge">Pairing</span></div>
-    <div class="pill">Current Pool: <span id="poolSize">0</span></div>
-    <div class="pill">Total Comparisons: <span id="progressText">0</span></div>
+    <div class="pill">Progress: <span id="progressText">0 / 0</span></div>
+    <div class="pill">Total Dupes: <span id="totalDupes">0</span></div>
   </div>
 
   <div class="arena" id="arena">
@@ -289,8 +287,8 @@ h3 {
 
 <script>
 /*
- * ONI Dupe Duelist Logic - Refactored and Enhanced
- * Maintains the original tournament logic (Single Elimination + Loser Sorting)
+ * ONI Dupe Ranker - Merge Sort Implementation
+ * This provides a more accurate ranking than the previous tournament model.
  */
 
 const ALL = [
@@ -303,18 +301,16 @@ const ALL = [
 
 // ---- state ----
 let initialPool = ALL.map(n => n + ".png");
-let roundNumber = 0;
-let currentPool = [];        // pool for current round (filenames)
-let nextPool = [];           // winners advancing to next round
-let roundLosersUnordered = []; // losers in this round (unordered)
-let orderedLosersAllRounds = []; // ordered losers appended after each round (from worst up)
-let comparisonCount = 0;
+let history = []; // for undo
 let totalComparisonsEstimate = 0;
-let mode = "pairing"; // 'pairing' or 'sortingLosers' or 'finished'
-let pairQueue = []; // queue of pair comparisons for pairing mode
-let sortingState = null; // state for interactive insertion-ranking of losers (object)
-let history = []; // for undo — stack of actions {type, data}
-let champion = null;
+let comparisonsDone = 0;
+
+// Merge sort specific state
+let sortStack = [];
+let leftList = null;
+let rightList = null;
+let mergedResult = [];
+let isFinished = false;
 
 // --- DOM Elements ---
 const leftImg = document.getElementById('leftImg');
@@ -326,12 +322,10 @@ const rightBtn = document.getElementById('rightBtn');
 const leftCard = document.getElementById('leftCard');
 const rightCard = document.getElementById('rightCard');
 
-const roundBadge = document.getElementById('roundBadge');
-const modeBadge = document.getElementById('modeBadge');
-const poolSize = document.getElementById('poolSize');
+const progressText = document.getElementById('progressText');
+const totalDupes = document.getElementById('totalDupes');
 const logArea = document.getElementById('logArea');
 const progressBar = document.getElementById('progressBar');
-const progressText = document.getElementById('progressText');
 const restartBtn = document.getElementById('restartBtn');
 const undoBtn = document.getElementById('undoBtn');
 const finalArea = document.getElementById('finalArea');
@@ -356,313 +350,194 @@ function shuffle(a){
     return a;
 }
 
-// build pair queue for single-elimination pairing
-function buildPairQueueFor(pool){
-    const q = [];
-    const arr = pool.slice();
-    shuffle(arr);
-    while(arr.length >= 2){
-        const a = arr.shift();
-        const b = arr.shift();
-        q.push([a,b]);
-    }
-    // if odd, last one gets bye (treated as auto-advance)
-    if(arr.length === 1){
-        q.push([arr.shift(), null]); // null signals bye
-    }
-    return q;
-}
+// --- Sorting Logic ---
 
-// --- Tournament Logic ---
-
-// insertion ranking generator: given a list of losers, generate interactive comparisons
-function startSortingLosers(list){
-    if(list.length === 0){
-        sortingState = null;
-        finishSortingLosers();
-        return;
-    }
-    // Losers are sorted from the WORST up. The first loser compared will be inserted first.
-    sortingState = {
-        items: shuffle(list.slice()), // Shuffle losers for fairness
-        ranked: [], // Best of losers will be at index 0
-        currentItem: null,
-        compareIndex: 0
-    };
-    mode = 'sortingLosers';
-    log(`Sorting ${list.length} loser(s) from Round ${roundNumber}.`);
-    prepareNextSortingComparison();
-}
-
-function prepareNextSortingComparison(){
-    if(!sortingState) return;
+function startSort() {
+    isFinished = false;
+    history = [];
+    comparisonsDone = 0;
+    const shuffled = shuffle(initialPool.slice());
     
-    // 1. Check if we need a new item to insert
-    if(sortingState.currentItem == null){
-        sortingState.currentItem = sortingState.items.shift();
-        sortingState.compareIndex = 0;
-        
-        // If the ranked list is empty, insert immediately (this is the first loser being ranked)
-        if(sortingState.ranked.length === 0){
-            sortingState.ranked.push(sortingState.currentItem);
-            history.push({type:'insert-loser', data:{item:sortingState.currentItem, pos:0, isInitial:true}});
-            sortingState.currentItem = null;
-            prepareNextSortingComparison(); // Move to next item
+    // Theoretical max comparisons for merge sort is n*log2(n) - n + 1
+    const n = initialPool.length;
+    totalComparisonsEstimate = Math.ceil(n * Math.log2(n) - n + 1);
+
+    // Initial state for iterative merge sort: a stack of single-item lists
+    sortStack = shuffled.map(item => [item]);
+    
+    leftList = null;
+    rightList = null;
+    mergedResult = [];
+
+    finalArea.hidden = true;
+    rankingList.innerHTML = '';
+    logArea.innerHTML = '';
+    log(`Sorting started with ${n} Duplicants.`);
+
+    processNextMergeStep();
+}
+
+function processNextMergeStep() {
+    // If we have two lists to merge, continue
+    if (leftList && rightList) {
+        // Case 1: Left list is exhausted, append remainder of right
+        if (leftList.length === 0) {
+            mergedResult.push(...rightList);
+            rightList = [];
+            finishCurrentMerge();
             return;
         }
-    }
-
-    // 2. Check if the current item goes at the end (it's worse than all currently ranked)
-    if(sortingState.compareIndex >= sortingState.ranked.length){
-        sortingState.ranked.push(sortingState.currentItem);
-        history.push({type:'insert-loser', data:{item:sortingState.currentItem, pos:sortingState.ranked.length-1, isInitial:false}});
-        sortingState.currentItem = null;
-        prepareNextSortingComparison(); // Move to next item
-        return;
-    }
-
-    // 3. Compare currentItem vs. ranked[compareIndex]
-    // The comparison asks: Is CurrentItem (A) better than RankedItem (B)?
-    // A: CurrentItem (item being inserted)
-    // B: RankedItem (already sorted loser)
-    const a = sortingState.currentItem;
-    const b = sortingState.ranked[sortingState.compareIndex];
-    
-    // Queue the comparison: A vs B
-    pairQueue = [[a,b]];
-    updatePoolUI();
-}
-
-function finishSortingLosers(){
-    // Winners of the loser sort are the 'best' of the losers (pushing them to the end of orderedLosersAllRounds)
-    if(sortingState && sortingState.ranked){
-        orderedLosersAllRounds = sortingState.ranked.reverse().concat(orderedLosersAllRounds);
-    }
-    sortingState = null;
-    
-    // Prepare next round
-    roundNumber++;
-    currentPool = nextPool.slice();
-    nextPool = [];
-    roundLosersUnordered = [];
-    comparisonCount = 0;
-    
-    // If only one left, finished
-    if(currentPool.length <= 1){
-        if(currentPool.length === 1){
-            champion = currentPool[0];
-        }
-        mode = 'finished';
-        showFinal();
-        return;
-    }
-    
-    // else start next pairing round
-    mode = 'pairing';
-    pairQueue = buildPairQueueFor(currentPool);
-    totalComparisonsEstimate = pairQueue.length;
-    log(`Starting Round ${roundNumber} with ${currentPool.length} dupes.`);
-    updatePoolUI();
-}
-
-
-// UI rendering for current pairQueue or sorting comparison
-function updatePoolUI(){
-    // Clear highlights
-    leftCard.classList.remove('highlight-winner', 'highlight-loser');
-    rightCard.classList.remove('highlight-winner', 'highlight-loser');
-    
-    // Update status bar
-    roundBadge.textContent = roundNumber;
-    modeBadge.textContent = mode === 'pairing' ? 'Pairing' : 'Sorting Losers';
-    
-    const totalRounds = Math.ceil(Math.log2(initialPool.length));
-    
-    if(mode === 'pairing'){
-        poolSize.textContent = `${currentPool.length} (${pairQueue.length} match${pairQueue.length !== 1 ? 'es' : ''} left)`;
-        progressText.textContent = history.filter(h => h.type !== 'bye' && h.type !== 'insert-loser').length;
-        
-        if(pairQueue.length === 0){
-            // Time to sort losers
-            startSortingLosers(roundLosersUnordered);
-            roundLosersUnordered = [];
+        // Case 2: Right list is exhausted, append remainder of left
+        if (rightList.length === 0) {
+            mergedResult.push(...leftList);
+            leftList = [];
+            finishCurrentMerge();
             return;
         }
-        
-        const [a,b] = pairQueue[0];
-        if(!b){
-            // Bye - auto advance
-            showBye(a);
-            return;
-        }
-        showPair(a,b);
-        
-    } else if(mode === 'sortingLosers'){
-        poolSize.textContent = `${sortingState.items.length + (sortingState.currentItem ? 1 : 0)} / ${sortingState.ranked.length} ranked`;
-        
-        if(pairQueue.length === 0){
-            if(sortingState && (sortingState.items.length > 0 || sortingState.currentItem != null)){
-                prepareNextSortingComparison();
-                return;
-            } else {
-                // done sorting
-                finishSortingLosers();
-                return;
-            }
+        // Case 3: Both lists have items, present the next comparison
+        updateUI();
+
+    // If we don't have lists to merge, get new ones from the stack
+    } else {
+        // Case 4: More than one list on stack, pop two to start a new merge
+        if (sortStack.length > 1) {
+            leftList = sortStack.pop();
+            rightList = sortStack.pop();
+            mergedResult = [];
+            log(`Merging a list of ${leftList.length} with a list of ${rightList.length}.`);
+            processNextMergeStep(); // Recurse to present the first comparison
+        // Case 5: Only one list left on stack, sorting is complete
         } else {
-            const [a,b] = pairQueue[0];
-            showPair(a,b);
-        }
-    } else if(mode === 'finished'){
-        leftName.textContent = rightName.textContent = "Tournament complete";
-        leftImg.src = rightImg.src = "";
-        leftImg.alt = rightImg.alt = "";
-        leftBtn.disabled = rightBtn.disabled = true;
-        poolSize.textContent = '0';
-        progressText.textContent = history.filter(h => h.type !== 'bye' && h.type !== 'insert-loser').length;
-        
-        // This is necessary in case an undo in 'finished' mode sends it back
-        if(champion && champion === currentPool[0]){
-             showPair(champion, null, "CHAMPION!");
+            isFinished = true;
+            const finalRankedList = sortStack[0] || [];
+            log("Sorting complete!");
+            showFinal(finalRankedList);
         }
     }
+}
+
+function finishCurrentMerge() {
+    log(`Merge finished. New sorted list has ${mergedResult.length} items.`);
+    sortStack.push(mergedResult); // Push the newly sorted list back
+    leftList = null;
+    rightList = null;
+    mergedResult = [];
+    processNextMergeStep(); // Check stack for next action
+}
+
+function choose(side) {
+    if (isFinished || !leftList || !rightList) return;
+
+    const leftItem = leftList[0];
+    const rightItem = rightList[0];
+    let winner, loser;
+
+    if (side === 'left') {
+        winner = leftList.shift();
+        loser = rightItem;
+        mergedResult.push(winner);
+        leftCard.classList.add('highlight-winner');
+        rightCard.classList.add('highlight-loser');
+    } else {
+        winner = rightList.shift();
+        loser = leftItem;
+        mergedResult.push(winner);
+        rightCard.classList.add('highlight-winner');
+        leftCard.classList.add('highlight-loser');
+    }
     
-    // Update progress bar
-    const totalMaxComparisons = Math.ceil(initialPool.length * Math.log2(initialPool.length) * 1.5); // Heuristic for single elim + sorting
-    const currentTotalComparisons = history.filter(h => h.type !== 'bye').length;
-    const pct = totalMaxComparisons ? Math.round((currentTotalComparisons / totalMaxComparisons) * 100) : 0;
+    history.push({
+        type: 'compare',
+        winner: winner,
+        loser: loser,
+        winnerOriginalList: (side === 'left' ? 'left' : 'right')
+    });
+    comparisonsDone++;
+
+    leftBtn.disabled = rightBtn.disabled = true;
+
+    setTimeout(() => {
+        leftCard.classList.remove('highlight-winner', 'highlight-loser');
+        rightCard.classList.remove('highlight-winner', 'highlight-loser');
+        processNextMergeStep();
+    }, 400);
+}
+
+function undo() {
+    if (history.length === 0) {
+        log("Nothing to undo.");
+        return;
+    }
+    if (isFinished) {
+        // If finished, need to rollback the final state
+        isFinished = false;
+        const lastList = rankingList.innerHTML; // a bit of a hack
+        if(lastList){
+            sortStack.push(mergedResult); // Put it back on the stack
+            finalArea.hidden = true;
+        }
+    }
+
+    const lastAction = history.pop();
+    if (lastAction.type === 'compare') {
+        const { winner, loser, winnerOriginalList } = lastAction;
+
+        // Remove winner from the merged result
+        if(mergedResult.length > 0 && mergedResult[mergedResult.length - 1] === winner){
+            mergedResult.pop();
+        }
+       
+        // Put items back into their original lists
+        if (winnerOriginalList === 'left') {
+            leftList.unshift(winner);
+        } else {
+            rightList.unshift(winner);
+        }
+
+        comparisonsDone--;
+        log(`Undo: Re-comparing ${basenameToLabel(winner)} and ${basenameToLabel(loser)}.`);
+        updateUI();
+    }
+}
+
+
+// --- UI and Display ---
+
+function updateUI() {
+    if (isFinished) {
+        leftCard.style.opacity = 0;
+        rightCard.style.opacity = 0;
+        return;
+    }
+
+    const leftItem = leftList[0];
+    const rightItem = rightList[0];
+    
+    leftImg.src = imgPath(leftItem);
+    leftImg.alt = basenameToLabel(leftItem);
+    leftName.textContent = basenameToLabel(leftItem);
+    leftBtn.textContent = `Choose ${basenameToLabel(leftItem)} (←)`;
+    
+    rightImg.src = imgPath(rightItem);
+    rightImg.alt = basenameToLabel(rightItem);
+    rightName.textContent = basenameToLabel(rightItem);
+    rightBtn.textContent = `Choose ${basenameToLabel(rightItem)} (→)`;
+
+    leftBtn.disabled = false;
+    rightBtn.disabled = false;
+    
+    // Update status
+    totalDupes.textContent = initialPool.length;
+    progressText.textContent = `${comparisonsDone} / ~${totalComparisonsEstimate}`;
+    const pct = totalComparisonsEstimate > 0 ? (comparisonsDone / totalComparisonsEstimate) * 100 : 0;
     progressBar.style.width = Math.min(100, pct) + '%';
 }
 
-// show a pair
-function showPair(a,b, overrideName=""){
-    leftImg.src = imgPath(a);
-    leftImg.alt = basenameToLabel(a);
-    leftName.textContent = basenameToLabel(a);
-
-    if (b) {
-        rightImg.src = imgPath(b);
-        rightImg.alt = basenameToLabel(b);
-        rightName.textContent = basenameToLabel(b);
-        leftBtn.textContent = `Choose ${basenameToLabel(a)} (←)`;
-        rightBtn.textContent = `Choose ${basenameToLabel(b)} (→)`;
-        leftBtn.disabled = false;
-        rightBtn.disabled = false;
-        leftCard.style.opacity = 1;
-        rightCard.style.opacity = 1;
-    } else {
-        // Champion/Final Case
-        rightImg.src = "";
-        rightImg.alt = "";
-        rightName.textContent = overrideName || "";
-        leftBtn.textContent = "CHAMPION";
-        rightBtn.textContent = "N/A";
-        leftBtn.disabled = true;
-        rightBtn.disabled = true;
-        leftCard.style.opacity = 1;
-        rightCard.style.opacity = 0;
-    }
-}
-
-// show bye
-function showBye(a){
-    showPair(a, null, "(Auto-Advance Bye)");
-
-    // process bye automatically after short delay so user sees it
-    setTimeout(() => {
-        // Check if state is still the same (no undo happened during delay)
-        if(pairQueue.length > 0 && pairQueue[0][0] === a && pairQueue[0][1] === null) {
-            nextPool.push(a);
-            history.push({type:'bye', data:{item:a, round:roundNumber}});
-            pairQueue.shift();
-            log(`**BYE** for ${basenameToLabel(a)} - auto-advances.`);
-            updatePoolUI();
-        }
-    }, 1000); // Increased delay for better visibility
-}
-
-// handle choice
-function choose(side){
-    if(pairQueue.length === 0) return;
-    const [a,b] = pairQueue[0];
-    if(!b) return; // Should not happen with bye logic
-
-    let winner, loser;
-    let winnerCard, loserCard;
-    
-    if(side === 'left'){ winner = a; loser = b; winnerCard = leftCard; loserCard = rightCard; } 
-    else { winner = b; loser = a; winnerCard = rightCard; loserCard = leftCard; }
-
-    // Visual feedback
-    winnerCard.classList.add('highlight-winner');
-    loserCard.classList.add('highlight-loser');
-    leftBtn.disabled = rightBtn.disabled = true; // Disable until next pair is loaded
-
-    // Delay processing to allow user to see winner
-    setTimeout(() => {
-        if(mode === 'pairing'){
-            // winner advances nextPool, loser recorded for sorting later
-            nextPool.push(winner);
-            roundLosersUnordered.push(loser);
-            history.push({type:'pair', data:{winner, loser, round:roundNumber}});
-            pairQueue.shift();
-            log(`Round ${roundNumber} Match: **${basenameToLabel(winner)}** beats ${basenameToLabel(loser)}.`);
-        } else if(mode === 'sortingLosers'){
-            const currentItem = sortingState.currentItem;
-            const ranked = sortingState.ranked;
-            const idx = sortingState.compareIndex;
-            
-            // In Loser Sorting: The item being inserted (currentItem) is A. The already ranked item (B) is ranked[idx].
-            // We are determining where A is ranked relative to B.
-            // A wins: A is better than B, so A is inserted BEFORE B at index idx.
-            // B wins: A is worse than B, so we move to the next comparison (A vs. ranked[idx+1]).
-            
-            let chosenIsCurrent = (side === 'left' && a===currentItem) || (side === 'right' && b===currentItem);
-            
-            if(chosenIsCurrent){
-                // Winner is the current item (A) -> A is better -> insert A before B
-                ranked.splice(idx, 0, currentItem);
-                history.push({type:'insert-loser', data:{item:currentItem, pos:idx, comparedTo:b, isInitial:false}});
-                sortingState.currentItem = null; // A is placed, ready for next item
-                pairQueue.shift();
-                log(`Sorting: **${basenameToLabel(currentItem)}** inserted at position ${ranked.length - idx}.`);
-                prepareNextSortingComparison();
-            } else {
-                // Winner is the ranked item (B) -> B is better -> compare A against next ranked item
-                sortingState.compareIndex++;
-                pairQueue.shift();
-                log(`Sorting: ${basenameToLabel(currentItem)} is worse than **${basenameToLabel(b)}**.`);
-                prepareNextSortingComparison();
-            }
-        }
-        comparisonCount = history.filter(h => h.type !== 'bye' && h.type !== 'insert-loser').length;
-        updatePoolUI();
-    }, 400); // Short delay for highlight visibility
-}
-
-// finalize and show final ranking
-function showFinal(){
-    // Ensure all state is consolidated
-    if(sortingState && sortingState.ranked.length > 0){
-        orderedLosersAllRounds = sortingState.ranked.reverse().concat(orderedLosersAllRounds);
-        sortingState = null;
-    }
-    
-    // Build final ranking (from best to worst)
-    const finalRanking = [];
-    if(champion) finalRanking.push(champion);
-    finalRanking.push(...orderedLosersAllRounds);
-    
-    // Find any unranked dupes (e.g., if the user stops early or if the logic missed one)
-    const included = new Set(finalRanking);
-    for(const it of initialPool){
-        if(!included.has(it)) finalRanking.push(it);
-    }
-    
-    // Show ranking
+function showFinal(finalRanking) {
     rankingList.innerHTML = '';
     finalArea.hidden = false;
-    for(let i=0;i<finalRanking.length;i++){
+    
+    for(let i=0; i < finalRanking.length; i++){
         const fn = finalRanking[i];
         const label = basenameToLabel(fn);
         const item = document.createElement('div');
@@ -679,150 +554,31 @@ function showFinal(){
         `;
         rankingList.appendChild(item);
     }
-    log("Tournament complete. Final ranking shown below.");
+    
     leftBtn.disabled = rightBtn.disabled = true;
+    leftName.textContent = "Ranking Complete!";
+    rightName.textContent = "";
+    leftImg.src = "";
+    rightImg.src = "";
 }
 
-// logging
 function log(txt){
     const t = document.createElement('div');
     t.innerHTML = `[${new Date().toLocaleTimeString()}] ${txt}`;
     logArea.prepend(t);
 }
 
-// initialize tournament
-function startTournament(){
-    // reset all
-    roundNumber = 1;
-    currentPool = initialPool.slice();
-    nextPool = [];
-    roundLosersUnordered = [];
-    orderedLosersAllRounds = [];
-    comparisonCount = 0;
-    totalComparisonsEstimate = 0;
-    mode = 'pairing';
-    pairQueue = buildPairQueueFor(currentPool);
-    totalComparisonsEstimate = pairQueue.length;
-    history = [];
-    champion = null;
-    sortingState = null; // Ensure this is clear
-    
-    finalArea.hidden = true;
-    rankingList.innerHTML = '';
-    
-    leftBtn.disabled = false;
-    rightBtn.disabled = false;
-    logArea.innerHTML = '';
-    
-    log(`Tournament Started. Total Dupes: ${currentPool.length}.`);
-    updatePoolUI();
-}
-
-// undo last action (single step)
-function undo(){
-    if(history.length === 0){ log("Nothing to undo."); return; }
-    
-    // Revert to the state before the last action
-    const last = history.pop();
-
-    if(mode === 'finished'){
-        // If undoing from finished state, reset state and run undo logic
-        mode = 'pairing'; // Assume going back to pairing/sorting
-        champion = null;
-        finalArea.hidden = true;
-        // The actual undo for the last action will be handled by the switch below
-    } else if(mode === 'sortingLosers' && sortingState.currentItem === null && last.type !== 'insert-loser'){
-        // We've just finished inserting an item and are about to start the next one.
-        // We need to re-queue the current item to be inserted.
-        if(last.type === 'insert-loser'){
-             // Handled below
-        } else {
-            // Must have been a round change.
-            // Need a more robust round-reversion logic here, but for now, rely on `insert-loser` and `pair`
-        }
-    }
-    
-    if(last.type === 'pair'){
-        const {winner, loser, round} = last.data;
-        // 1. Remove winner from nextPool
-        const idx = nextPool.lastIndexOf(winner);
-        if(idx !== -1) nextPool.splice(idx,1);
-        // 2. Remove loser from roundLosersUnordered
-        const loserIdx = roundLosersUnordered.lastIndexOf(loser);
-        if(loserIdx !== -1) roundLosersUnordered.splice(loserIdx, 1);
-
-        // 3. Re-queue the comparison
-        pairQueue.unshift([winner, loser]);
-        comparisonCount = history.filter(h => h.type !== 'bye' && h.type !== 'insert-loser').length;
-        log(`Undid match: ${basenameToLabel(winner)} / ${basenameToLabel(loser)}.`);
-        mode = 'pairing';
-        updatePoolUI();
-        return;
-    } else if(last.type === 'insert-loser'){
-        const {item, pos, isInitial} = last.data;
-        
-        // Find the index of the item in the currently ranked list (either in sortingState or orderedLosersAllRounds)
-        if(mode === 'sortingLosers' && sortingState){
-            const idx = sortingState.ranked.indexOf(item);
-            if(idx !== -1) sortingState.ranked.splice(idx,1);
-            
-            // If the item was not inserted (it was a 'worse' choice, pushing the index forward),
-            // then we need to pull back the compare index.
-            if(sortingState.currentItem !== item){
-                // This means the last action was *not* an insertion, but a move of the compareIndex.
-                // Re-enact that by setting the current item and reducing the index.
-                // We're undoing the *comparison* that resulted in the item NOT being placed.
-                if(sortingState.compareIndex > 0) sortingState.compareIndex--;
-                if(!isInitial) history.pop(); // Remove the comparison that happened right before the insertion
-            }
-            
-            // Put the item back into the current pool to be ranked
-            if (sortingState.currentItem !== item) {
-                sortingState.items.unshift(item);
-                sortingState.currentItem = null;
-            }
-
-        } else {
-            // This undo is crossing a round boundary (undoing an insertion from a *previous* round)
-            const idx = orderedLosersAllRounds.indexOf(item);
-            if(idx !== -1) orderedLosersAllRounds.splice(idx,1);
-            
-            // Revert state to before sorting started (needs a more complex history if we go back multiple rounds)
-            // For simplicity, we just log that we can't fully revert and continue.
-            log(`Undid final placement of ${basenameToLabel(item)}. Complex history not fully reverted.`);
-        }
-        
-        comparisonCount = history.filter(h => h.type !== 'bye' && h.type !== 'insert-loser').length;
-        mode = 'sortingLosers';
-        updatePoolUI();
-        return;
-    } else if(last.type === 'bye'){
-        const {item} = last.data;
-        const idx = nextPool.lastIndexOf(item);
-        if(idx !== -1) nextPool.splice(idx,1);
-        pairQueue.unshift([item, null]);
-        comparisonCount = history.filter(h => h.type !== 'bye' && h.type !== 'insert-loser').length;
-        log(`Undid bye for ${basenameToLabel(item)}.`);
-        mode = 'pairing';
-        updatePoolUI();
-        return;
-    } else {
-        log("Cannot undo that action type.");
-    }
-
-    updatePoolUI(); // Final catch-all update
-}
-
 // --- Event Listeners ---
-leftBtn.addEventListener('click', ()=>choose('left'));
-rightBtn.addEventListener('click', ()=>choose('right'));
-restartBtn.addEventListener('click', ()=>{
-    if(confirm("Restart the entire tournament? This clears all progress.")) startTournament();
+leftBtn.addEventListener('click', () => choose('left'));
+rightBtn.addEventListener('click', () => choose('right'));
+restartBtn.addEventListener('click', () => {
+    if(confirm("Restart the entire ranking process? This clears all progress.")) {
+        startSort();
+    }
 });
-undoBtn.addEventListener('click', ()=>undo());
+undoBtn.addEventListener('click', () => undo());
 
-// keyboard shortcuts (ArrowLeft / ArrowRight)
-document.addEventListener('keydown', (e)=>{
+document.addEventListener('keydown', (e) => {
     if(e.key === 'ArrowLeft' && !leftBtn.disabled) {
         e.preventDefault();
         choose('left');
@@ -833,8 +589,8 @@ document.addEventListener('keydown', (e)=>{
     }
 });
 
-// kick things off
-startTournament();
+// Kick things off
+startSort();
 
 </script>
 </body>
