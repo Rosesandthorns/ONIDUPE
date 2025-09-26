@@ -340,7 +340,7 @@ function filenameOnly(fn){
     if (!fn) return '';
     return fn.replace('.png', '');
 }
-function imgPath(fn){ return 'images/' + fn; }
+function imgPath(fn){ return './' + fn; } // Assuming images are in the same folder. Change if needed.
 
 function shuffle(a){
     for(let i=a.length-1;i>0;i--){
@@ -358,11 +358,9 @@ function startSort() {
     comparisonsDone = 0;
     const shuffled = shuffle(initialPool.slice());
     
-    // Theoretical max comparisons for merge sort is n*log2(n) - n + 1
     const n = initialPool.length;
     totalComparisonsEstimate = Math.ceil(n * Math.log2(n) - n + 1);
 
-    // Initial state for iterative merge sort: a stack of single-item lists
     sortStack = shuffled.map(item => [item]);
     
     leftList = null;
@@ -373,40 +371,40 @@ function startSort() {
     rankingList.innerHTML = '';
     logArea.innerHTML = '';
     log(`Sorting started with ${n} Duplicants.`);
+    undoBtn.disabled = true;
 
     processNextMergeStep();
 }
 
 function processNextMergeStep() {
-    // If we have two lists to merge, continue
     if (leftList && rightList) {
-        // Case 1: Left list is exhausted, append remainder of right
         if (leftList.length === 0) {
             mergedResult.push(...rightList);
             rightList = [];
             finishCurrentMerge();
             return;
         }
-        // Case 2: Right list is exhausted, append remainder of left
         if (rightList.length === 0) {
             mergedResult.push(...leftList);
             leftList = [];
             finishCurrentMerge();
             return;
         }
-        // Case 3: Both lists have items, present the next comparison
+        // *** FIX: Failsafe for duplicate items ***
+        if (leftList[0] === rightList[0]) {
+            log(`CRITICAL: Duplicate item detected (${basenameToLabel(leftList[0])}). Auto-resolving.`);
+            mergedResult.push(leftList.shift()); // just pick one and move on
+            processNextMergeStep();
+            return;
+        }
         updateUI();
-
-    // If we don't have lists to merge, get new ones from the stack
     } else {
-        // Case 4: More than one list on stack, pop two to start a new merge
         if (sortStack.length > 1) {
             leftList = sortStack.pop();
             rightList = sortStack.pop();
             mergedResult = [];
             log(`Merging a list of ${leftList.length} with a list of ${rightList.length}.`);
-            processNextMergeStep(); // Recurse to present the first comparison
-        // Case 5: Only one list left on stack, sorting is complete
+            processNextMergeStep();
         } else {
             isFinished = true;
             const finalRankedList = sortStack[0] || [];
@@ -418,11 +416,13 @@ function processNextMergeStep() {
 
 function finishCurrentMerge() {
     log(`Merge finished. New sorted list has ${mergedResult.length} items.`);
-    sortStack.push(mergedResult); // Push the newly sorted list back
+    sortStack.push(mergedResult);
     leftList = null;
     rightList = null;
     mergedResult = [];
-    processNextMergeStep(); // Check stack for next action
+    // *** FIX: Disable undo button during state transition to prevent corruption ***
+    undoBtn.disabled = true;
+    processNextMergeStep();
 }
 
 function choose(side) {
@@ -450,7 +450,8 @@ function choose(side) {
         type: 'compare',
         winner: winner,
         loser: loser,
-        winnerOriginalList: (side === 'left' ? 'left' : 'right')
+        winnerOriginalList: (side === 'left' ? 'left' : 'right'),
+        loserOriginalList: (side === 'left' ? 'right' : 'left'),
     });
     comparisonsDone++;
 
@@ -464,30 +465,26 @@ function choose(side) {
 }
 
 function undo() {
-    if (history.length === 0) {
-        log("Nothing to undo.");
+    if (history.length === 0 || !leftList) {
+        log("Nothing to undo or cannot undo at this stage.");
         return;
     }
     if (isFinished) {
-        // If finished, need to rollback the final state
         isFinished = false;
-        const lastList = rankingList.innerHTML; // a bit of a hack
-        if(lastList){
-            sortStack.push(mergedResult); // Put it back on the stack
-            finalArea.hidden = true;
-        }
+        finalArea.hidden = true;
+        sortStack.push(mergedResult);
     }
 
     const lastAction = history.pop();
     if (lastAction.type === 'compare') {
-        const { winner, loser, winnerOriginalList } = lastAction;
+        const { winner, winnerOriginalList } = lastAction;
 
-        // Remove winner from the merged result
+        // Check if the winner is actually at the end of the merged list to prevent errors
         if(mergedResult.length > 0 && mergedResult[mergedResult.length - 1] === winner){
             mergedResult.pop();
         }
        
-        // Put items back into their original lists
+        // Put winner back into its original list
         if (winnerOriginalList === 'left') {
             leftList.unshift(winner);
         } else {
@@ -495,9 +492,10 @@ function undo() {
         }
 
         comparisonsDone--;
-        log(`Undo: Re-comparing ${basenameToLabel(winner)} and ${basenameToLabel(loser)}.`);
+        log(`Undo: Re-comparing ${basenameToLabel(winner)}.`);
         updateUI();
     }
+    undoBtn.disabled = history.length === 0;
 }
 
 
@@ -509,6 +507,8 @@ function updateUI() {
         rightCard.style.opacity = 0;
         return;
     }
+    // Enable undo if there's history, otherwise disable it.
+    undoBtn.disabled = history.length === 0;
 
     const leftItem = leftList[0];
     const rightItem = rightList[0];
@@ -526,7 +526,6 @@ function updateUI() {
     leftBtn.disabled = false;
     rightBtn.disabled = false;
     
-    // Update status
     totalDupes.textContent = initialPool.length;
     progressText.textContent = `${comparisonsDone} / ~${totalComparisonsEstimate}`;
     const pct = totalComparisonsEstimate > 0 ? (comparisonsDone / totalComparisonsEstimate) * 100 : 0;
@@ -556,6 +555,7 @@ function showFinal(finalRanking) {
     }
     
     leftBtn.disabled = rightBtn.disabled = true;
+    undoBtn.disabled = true;
     leftName.textContent = "Ranking Complete!";
     rightName.textContent = "";
     leftImg.src = "";
